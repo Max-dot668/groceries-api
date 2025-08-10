@@ -1,7 +1,7 @@
 from typing import Annotated
-from fastapi import FastAPI,Path, Query
+from fastapi import FastAPI,Path, Query, Body
 from pydantic import BaseModel, Field, HttpUrl
-
+from datetime import datetime
 class Image(BaseModel):
     url: HttpUrl
 
@@ -39,8 +39,12 @@ async def read_item(filter: Annotated[FilterParams, Query()]):
     return result
         
 @app.post("/items/{item_id}")
-async def create_item(item_id: Annotated[int, Path()], item: Item):
+async def create_item(
+    item_id: Annotated[int, Path()],
+    item: Item,
+    ):
     item_data = item.model_dump()
+    item_data.update({"date": datetime.now()})
     items[item_id] = item_data
     return {"item added": item_data}
 
