@@ -12,17 +12,13 @@ class Item(BaseModel):
     tags: set[str] = set()
     image: Image | None = None
 
-class UserIn(BaseModel):
+class BaseUser(BaseModel):
     username: str
-    password: str
     email: EmailStr
     full_name: str | None = None
+class UserIn(BaseUser):
+    password: str
     
-class UserOut(BaseModel):
-    username: str
-    email: EmailStr
-    fullname: str
-
 app = FastAPI()
 
 class FilterParams(BaseModel):
@@ -35,9 +31,9 @@ items = {}
 async def root() -> dict:
     return {"message": "groceries list manager"}
 
-@app.get("/user", response_model=UserOut)
-async def get_user(user: UserIn) -> Any:
-    return user
+@app.post("/user/", response_model_exclude_unset=True)
+async def create_user(user: UserIn) -> BaseUser:
+    return user 
 
 @app.get("/user/items")
 async def read_items() -> dict:
@@ -51,14 +47,14 @@ async def read_item(filter: Annotated[FilterParams, Query()]) -> list:
             result.append({"name": items[id]["name"], "quantity": items[id]["quantity"]})
     return result
         
-@app.post("/user/items/{item_id}")
+@app.post("/user/items/{item_id}", response_model_exclude_unset=True)
 async def create_item(item_id: Annotated[int, Path()], item: Item,) -> dict:
     item_data = item.model_dump()
     item_data.update({"date": datetime.now()})
     items[item_id] = item_data
     return {"item added": item_data}
 
-@app.put("/user/items/{item_id}")
+@app.put("/user/items/{item_id}", response_model_exclude_unset=True)
 async def update_item(item_id: Annotated[int, Path()], item: Item) -> dict:
     if item_id not in items:
         raise ValueError("item id was not found")
