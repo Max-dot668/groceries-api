@@ -1,7 +1,8 @@
-from typing import Annotated, Any
-from fastapi import FastAPI,Path, Query, status
+from typing import Annotated
+from fastapi import FastAPI,Path, Query, status, Form, File, UploadFile
 from pydantic import BaseModel, Field, HttpUrl, EmailStr
 from datetime import datetime
+
 class Image(BaseModel):
     url: HttpUrl
 
@@ -25,6 +26,10 @@ class UserInDB(BaseUser):
     
 app = FastAPI()
 
+class FormData(BaseModel):
+    username: str
+    password: str
+
 class FilterParams(BaseModel):
     name: str | None = None
     priority: int | None = None
@@ -43,6 +48,10 @@ def fake_save_user(user_in: UserIn) -> UserInDB:
 @app.get("/")
 async def root() -> dict:
     return {"message": "groceries list manager"}
+
+@app.post("/login/", status_code=status.HTTP_201_CREATED)
+async def login(form_data: Annotated[FormData, Form()]):
+    return form_data.username
 
 @app.post("/user/", response_model_exclude_unset=True, status_code=status.HTTP_201_CREATED)
 async def create_user(user: UserIn) -> BaseUser:
@@ -74,3 +83,15 @@ async def update_item(item_id: Annotated[int, Path()], item: Item) -> dict:
     else:
         items[item_id] = item.model_dump()
     return {"message": "item was updated"}
+
+@app.post("/files/", status_code=status.HTTP_201_CREATED)
+async def create_upload_file(
+    file: Annotated[bytes, File()],
+    fileb: Annotated[UploadFile, File()],
+    token: Annotated[str, Form()],
+    ):
+    return {
+        "file_size": len(file),
+        "token": token,
+        "fileb_content_type": fileb.content_type,
+    }
