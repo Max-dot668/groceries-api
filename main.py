@@ -1,5 +1,5 @@
 from typing import Annotated
-from fastapi import FastAPI,Path, Query, status, Form, File, UploadFile
+from fastapi import FastAPI,Path, Query, status, Form, File, UploadFile, HTTPException
 from pydantic import BaseModel, Field, HttpUrl, EmailStr
 from datetime import datetime
 
@@ -79,7 +79,7 @@ async def create_item(item_id: Annotated[int, Path()], item: Item,) -> dict:
 @app.put("/user/items/{item_id}", response_model_exclude_unset=True)
 async def update_item(item_id: Annotated[int, Path()], item: Item) -> dict:
     if item_id not in items:
-        raise ValueError("item id was not found")
+        raise HTTPException(status_code=404, detail="Item not found")
     else:
         items[item_id] = item.model_dump()
     return {"message": "item was updated"}
