@@ -44,7 +44,7 @@ def fake_save_user(user_in: UserIn) -> UserInDB:
 async def root() -> dict:
     return {"message": "groceries list manager"}
 
-@app.post("/user/", response_model_exclude_unset=True)
+@app.post("/user/", response_model_exclude_unset=True, status_code=status.HTTP_201_CREATED)
 async def create_user(user: UserIn) -> BaseUser:
     return user 
 
