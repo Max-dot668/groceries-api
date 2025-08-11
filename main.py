@@ -1,5 +1,5 @@
 from typing import Annotated, Any
-from fastapi import FastAPI,Path, Query
+from fastapi import FastAPI,Path, Query, status
 from pydantic import BaseModel, Field, HttpUrl, EmailStr
 from datetime import datetime
 class Image(BaseModel):
@@ -60,7 +60,7 @@ async def read_item(filter: Annotated[FilterParams, Query()]) -> list:
             result.append({"name": items[id]["name"], "quantity": items[id]["quantity"]})
     return result
         
-@app.post("/user/items/{item_id}", response_model_exclude_unset=True)
+@app.post("/user/items/{item_id}", response_model_exclude_unset=True, status_code=status.HTTP_201_CREATED)
 async def create_item(item_id: Annotated[int, Path()], item: Item,) -> dict:
     item_data = item.model_dump()
     item_data.update({"date": datetime.now()})
