@@ -16,8 +16,12 @@ class BaseUser(BaseModel):
     username: str
     email: EmailStr
     full_name: str | None = None
+    
 class UserIn(BaseUser):
     password: str
+    
+class UserInDB(BaseUser):
+    hashed_password: str
     
 app = FastAPI()
 
@@ -26,6 +30,15 @@ class FilterParams(BaseModel):
     priority: int | None = None
 
 items = {} 
+
+def fake_password_hasher(raw_password: str) -> str:
+    return "supersecret" + raw_password
+
+def fake_save_user(user_in: UserIn) -> UserInDB:
+    hashed_password = fake_password_hasher(user_in.password)
+    user_in_db = UserInDB(**user_in.model_dump(), hashed_password=hashed_password)
+    print("User saved!  ..not really")
+    return user_in_db
 
 @app.get("/")
 async def root() -> dict:
