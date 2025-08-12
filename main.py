@@ -38,6 +38,7 @@ class FilterParams(BaseModel):
 class Tags(Enum):
     items = "items"
     users = "users"
+    files = "files"
 
 items = {} 
 
@@ -56,18 +57,38 @@ async def root() -> dict:
 
 @app.post("/login/", tags=[Tags.users], status_code=status.HTTP_201_CREATED)
 async def login(form_data: Annotated[FormData, Form()]):
+    """
+    Prompt user to fill out login form:
+    
+    - **username**: The user must input the username of the account
+    - **password**: The user must input password to confirm the account
+    """
     return form_data.username
 
-@app.post("/user/", response_model_exclude_unset=True, tags=[Tags.users], status_code=status.HTTP_201_CREATED)
+@app.post("/signup/", response_model_exclude_unset=True, tags=[Tags.users], status_code=status.HTTP_201_CREATED)
 async def create_user(user: UserIn) -> BaseUser:
+    """
+    Create a user account with all the information:
+    
+    - **username**: The user must create a username 
+    - **email**: The user must enter a valid email
+    - **full_name**: If the user doesn't enter a full name, you can omit this
+    - **password**: The user must enter an alphanumeric password
+    """
     return user 
 
-@app.get("/user/items", tags=[Tags.users])
+@app.get("/user/items", tags=[Tags.items], description="Retrieves all items listed in the groceries list")
 async def read_items() -> dict:
     return items
 
-@app.get("/user/items/item", tags=[Tags.users])
+@app.get("/user/items/item", tags=[Tags.items])
 async def read_item(filter: Annotated[FilterParams, Query()]) -> list:
+    """
+    Gets a list of items that matches the filters arguments:
+    
+    - **name**: If the user does not provide the name of the item, this will get omitted
+    - **priority**: If the user does not provide the priority from an item in list, this will get omitted
+    """
     result = []
     for id in items:
         if filter.name == items[id]["name"] or filter.priority == items[id]["priority"]:
@@ -76,6 +97,15 @@ async def read_item(filter: Annotated[FilterParams, Query()]) -> list:
         
 @app.post("/user/items/{item_id}", response_model_exclude_unset=True, tags=[Tags.items], status_code=status.HTTP_201_CREATED)
 async def create_item(item_id: Annotated[int, Path()], item: Item,) -> dict:
+    """
+    Create an item with all the information:
+    
+    - **item_id**: The item must have an id 
+    - **name**: Each item must have a name
+    - **priority**: Each item must have a priority from 1-5 inclusive
+    - **tags**: A set of unique tag strings for this item
+    - **image**: If the image is not provided, you can omit this 
+    """
     item_data = item.model_dump()
     item_data.update({"date": datetime.now()})
     items[item_id] = item_data
@@ -83,18 +113,33 @@ async def create_item(item_id: Annotated[int, Path()], item: Item,) -> dict:
 
 @app.put("/user/items/{item_id}", response_model_exclude_unset=True, tags=[Tags.items])
 async def update_item(item_id: Annotated[int, Path()], item: Item) -> dict:
+    """
+    Update an existing item in the groceries list with all the information:
+    
+    - **item_id**: The id must match the id of the item to be updated
+    - **name**: The item must have a name
+    - **priority**: Each item must have a priority from 1-5 inclusive
+    - **tags**: A set of unique tag strings for this item
+    - **image**: If the image is not provided, you can omit this 
+    """
     if item_id not in items:
         raise HTTPException(status_code=404, detail="Item not found")
     else:
         items[item_id] = item.model_dump()
     return {"message": "item was updated"}
 
-@app.post("/files/", tags=[Tags.items], status_code=status.HTTP_201_CREATED)
+@app.post("/files/", tags=[Tags.files], status_code=status.HTTP_201_CREATED)
 async def create_upload_file(
     file: Annotated[bytes, File()],
     fileb: Annotated[UploadFile, File()],
     token: Annotated[str, Form()],
     ):
+    """
+    Upload a file with all the information:
+    - **file**: Relatively small sized file  
+    - **fileb**: A better file input handling for bigger files
+    - **Token**: An input token that accepts a string
+    """
     return {
         "file_size": len(file),
         "token": token,
