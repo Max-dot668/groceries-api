@@ -1,6 +1,7 @@
 from enum import Enum
 from typing import Annotated
 from fastapi import FastAPI,Path, Query, status, Form, File, UploadFile, HTTPException
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field, HttpUrl, EmailStr
 from datetime import datetime
 
@@ -107,7 +108,7 @@ async def create_item(item_id: Annotated[int, Path()], item: Item,) -> dict:
     - **image**: If the image is not provided, you can omit this 
     """
     item_data = item.model_dump()
-    item_data.update({"date": datetime.now()})
+    item_data.update({"date": jsonable_encoder(datetime.now())})
     items[item_id] = item_data
     return {"item added": item_data}
 
