@@ -78,11 +78,11 @@ async def create_user(user: UserIn) -> BaseUser:
     """
     return user 
 
-@app.get("/user/items", tags=[Tags.items], description="Retrieves all items listed in the groceries list")
+@app.get("/user/items/", tags=[Tags.items], description="Retrieves all items listed in the groceries list")
 async def read_items() -> dict:
     return items
 
-@app.get("/user/items/item", tags=[Tags.items])
+@app.get("/user/items/item/", tags=[Tags.items])
 async def read_item(filter: Annotated[FilterParams, Query()]) -> list:
     """
     Gets a list of items that matches the filters arguments:
@@ -96,7 +96,7 @@ async def read_item(filter: Annotated[FilterParams, Query()]) -> list:
             result.append({"name": items[id]["name"], "quantity": items[id]["quantity"]})
     return result
         
-@app.post("/user/items/{item_id}", response_model_exclude_unset=True, tags=[Tags.items], status_code=status.HTTP_201_CREATED)
+@app.post("/user/items/{item_id}/", response_model_exclude_unset=True, tags=[Tags.items], status_code=status.HTTP_201_CREATED)
 async def create_item(item_id: Annotated[int, Path()], item: Item,) -> dict:
     """
     Create an item with all the information:
@@ -112,7 +112,7 @@ async def create_item(item_id: Annotated[int, Path()], item: Item,) -> dict:
     items[item_id] = item_data
     return {"item added": item_data}
 
-@app.put("/user/items/{item_id}", response_model_exclude_unset=True, tags=[Tags.items])
+@app.put("/user/items/{item_id}/", response_model_exclude_unset=True, tags=[Tags.items])
 async def update_item(item_id: Annotated[int, Path()], item: Item) -> dict:
     """
     Update an existing item in the groceries list with all the information:
@@ -128,6 +128,14 @@ async def update_item(item_id: Annotated[int, Path()], item: Item) -> dict:
     else:
         items[item_id] = item.model_dump()
     return {"message": "item was updated"}
+
+@app.delete("/user/items/{item_id}", tags=[Tags.items])
+async def delete_item(item_id: Annotated[int, Path()]):
+    my_item = items.get(item_id)
+    if my_item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    del items[item_id]
+    return my_item
 
 @app.post("/files/", tags=[Tags.files], status_code=status.HTTP_201_CREATED)
 async def create_upload_file(
