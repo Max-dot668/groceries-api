@@ -131,6 +131,11 @@ async def update_item(item_id: Annotated[int, Path()], item: Item) -> dict:
 
 @app.delete("/user/items/{item_id}", tags=[Tags.items])
 async def delete_item(item_id: Annotated[int, Path()]):
+    """
+    Delete an existing item in the groceries list with the information:
+    
+    - **item_id**: The id must match the id of the item to be deleted
+    """
     my_item = items.get(item_id)
     if my_item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
