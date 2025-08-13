@@ -155,7 +155,7 @@ async def read_users_me(
 @app.get("/users/me/items/", tags=[Tags.items])
 async def read_item(current_user: Annotated[User, Depends(get_current_active_user)], filter: Annotated[FilterParams, Query()]):
     """
-    Gets a list of items that matches the filters arguments:
+    Gets a list of items that matches the filters arguments, else it returns all the items in the database:
     
     - **name**: If the user does not provide the name of the item, this will get omitted
     - **priority**: If the user does not provide the priority from an item in list, this will get omitted
