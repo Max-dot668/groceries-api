@@ -1,9 +1,38 @@
+import jwt
 from enum import Enum
 from typing import Annotated
-from fastapi import FastAPI,Path, Query, status, Form, File, UploadFile, HTTPException
+from fastapi import FastAPI,Path, Query, status, Form, File, UploadFile, HTTPException, Depends
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field, HttpUrl, EmailStr
-from datetime import datetime
+from passlib.context import CryptContext
+from jwt.exceptions import InvalidTokenError
+from datetime import datetime, timezone, timedelta
+
+# to get a string like this run:
+# openssl rand -hex 32
+SECRET_KEY = "4888181d1e0fdd9fa67ce8bec4cf58d3f3fdf75e8b12d03eb51e1f0bf995bb16"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+    
+fake_users_db = {
+    "johndoe": {
+        "username": "johndoe",
+        "full_name": "John Doe",
+        "email": "johndoe@example.com",
+        "hashed_password": "$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW",  # bcrypt hash for "secret"
+        "disabled": False, 
+    },
+}
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    username: str | None = None
+
+items = {} 
 
 class Image(BaseModel):
     url: HttpUrl
@@ -15,18 +44,14 @@ class Item(BaseModel):
     tags: set[str] = set()
     image: Image | None = None
 
-class BaseUser(BaseModel):
+class User(BaseModel):
     username: str
-    email: EmailStr
+    email: EmailStr | None = None
     full_name: str | None = None
-    
-class UserIn(BaseUser):
-    password: str
-    
-class UserInDB(BaseUser):
+    disabled: bool | None = None
+
+class UserInDB(User):
     hashed_password: str
-    
-app = FastAPI()
 
 class FormData(BaseModel):
     username: str
@@ -41,49 +66,94 @@ class Tags(Enum):
     users = "users"
     files = "files"
 
-items = {} 
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-def fake_password_hasher(raw_password: str) -> str:
-    return "supersecret" + raw_password
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-def fake_save_user(user_in: UserIn) -> UserInDB:
-    hashed_password = fake_password_hasher(user_in.password)
-    user_in_db = UserInDB(**user_in.model_dump(), hashed_password=hashed_password)
-    print("User saved!  ..not really")
-    return user_in_db
+app = FastAPI()
+
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
+def get_user(db, username: str):
+    if username in db:
+        user_dict = db[username]
+        return UserInDB(**user_dict)
+
+def authenticate_user(fake_db, username: str, password: str):
+    user = get_user(fake_db, username)
+    if not user:
+        return False
+    if not verify_password(password, user.hashed_password):
+        return False
+    return user
+
+def create_access_token(data: dict, expires_delta: timedelta | None = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.now(timezone.utc) + expires_delta
+    else:
+        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        token_data = TokenData(username=username)
+    except InvalidTokenError:
+        raise credentials_exception
+    user = get_user(fake_users_db, username=token_data.username) # type: ignore
+    if user is None:
+        raise credentials_exception
+    return user
+
+async def get_current_active_user(
+    current_user: Annotated[User, Depends(get_current_user)],    
+):
+    if current_user.disabled:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user")
+    return current_user
 
 @app.get("/")
 async def root() -> dict:
     return {"message": "groceries list manager"}
 
-@app.post("/login/", tags=[Tags.users], status_code=status.HTTP_201_CREATED)
-async def login(form_data: Annotated[FormData, Form()]):
-    """
-    Prompt user to fill out login form:
-    
-    - **username**: The user must input the username of the account
-    - **password**: The user must input password to confirm the account
-    """
-    return form_data.username
+@app.post("/token", tags=[Tags.users])
+async def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]) -> Token:
+    user = authenticate_user(fake_users_db, form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return Token(access_token=access_token, token_type="bearer")
 
-@app.post("/signup/", response_model_exclude_unset=True, tags=[Tags.users], status_code=status.HTTP_201_CREATED)
-async def create_user(user: UserIn) -> BaseUser:
-    """
-    Create a user account with all the information:
-    
-    - **username**: The user must create a username 
-    - **email**: The user must enter a valid email
-    - **full_name**: If the user doesn't enter a full name, you can omit this
-    - **password**: The user must enter an alphanumeric password
-    """
-    return user 
+@app.get("/users/me", tags=[Tags.users])
+async def read_users_me(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+):
+    return current_user
 
-@app.get("/user/items/", tags=[Tags.items], description="Retrieves all items listed in the groceries list")
-async def read_items() -> dict:
-    return items
-
-@app.get("/user/items/item/", tags=[Tags.items])
-async def read_item(filter: Annotated[FilterParams, Query()]) -> list:
+@app.get("/users/me/items/", tags=[Tags.items])
+async def read_item(current_user: Annotated[User, Depends(get_current_active_user)], filter: Annotated[FilterParams, Query()]):
     """
     Gets a list of items that matches the filters arguments:
     
@@ -91,13 +161,15 @@ async def read_item(filter: Annotated[FilterParams, Query()]) -> list:
     - **priority**: If the user does not provide the priority from an item in list, this will get omitted
     """
     result = []
+    if filter.name is None and filter.priority is None:
+        return items
     for id in items:
         if filter.name == items[id]["name"] or filter.priority == items[id]["priority"]:
             result.append({"name": items[id]["name"], "quantity": items[id]["quantity"]})
     return result
         
-@app.post("/user/items/{item_id}/", response_model_exclude_unset=True, tags=[Tags.items], status_code=status.HTTP_201_CREATED)
-async def create_item(item_id: Annotated[int, Path()], item: Item,) -> dict:
+@app.post("/users/me/items/{item_id}/", response_model_exclude_unset=True, tags=[Tags.items], status_code=status.HTTP_201_CREATED)
+async def create_item(current_user: Annotated[User, Depends(get_current_active_user)], item_id: Annotated[int, Path()], item: Item,) -> dict:
     """
     Create an item with all the information:
     
@@ -112,8 +184,8 @@ async def create_item(item_id: Annotated[int, Path()], item: Item,) -> dict:
     items[item_id] = item_data
     return {"item added": item_data}
 
-@app.put("/user/items/{item_id}/", response_model_exclude_unset=True, tags=[Tags.items])
-async def update_item(item_id: Annotated[int, Path()], item: Item) -> dict:
+@app.put("/users/me/items/{item_id}/", response_model_exclude_unset=True, tags=[Tags.items])
+async def update_item(current_user: Annotated[User, Depends(get_current_active_user)], item_id: Annotated[int, Path()], item: Item) -> dict:
     """
     Update an existing item in the groceries list with all the information:
     
@@ -129,8 +201,8 @@ async def update_item(item_id: Annotated[int, Path()], item: Item) -> dict:
         items[item_id] = item.model_dump()
     return {"message": "item was updated"}
 
-@app.delete("/user/items/{item_id}", tags=[Tags.items])
-async def delete_item(item_id: Annotated[int, Path()]):
+@app.delete("/users/me/items/{item_id}", tags=[Tags.items])
+async def delete_item(current_user: Annotated[User, Depends(get_current_active_user)], item_id: Annotated[int, Path()]):
     """
     Delete an existing item in the groceries list with the information:
     
@@ -142,8 +214,9 @@ async def delete_item(item_id: Annotated[int, Path()]):
     del items[item_id]
     return my_item
 
-@app.post("/files/", tags=[Tags.files], status_code=status.HTTP_201_CREATED)
+@app.post("/users/me/files/", tags=[Tags.files], status_code=status.HTTP_201_CREATED)
 async def create_upload_file(
+    current_user: Annotated[User, Depends(get_current_active_user)],
     file: Annotated[bytes, File()],
     fileb: Annotated[UploadFile, File()],
     token: Annotated[str, Form()],
