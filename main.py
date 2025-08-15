@@ -1,7 +1,8 @@
 import jwt
+import time
 from enum import Enum
 from typing import Annotated
-from fastapi import FastAPI,Path, Query, status, Form, File, UploadFile, HTTPException, Depends
+from fastapi import FastAPI,Path, Query, status, Form, File, UploadFile, HTTPException, Depends, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field, HttpUrl, EmailStr
@@ -126,6 +127,14 @@ async def get_current_active_user(
     if current_user.disabled:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user")
     return current_user
+
+@app.middleware("http")
+async def add_process_time_header(request: Request, call_next):
+    start_time = time.perf_counter()
+    response = await call_next(request)
+    process_time = time.perf_counter() - start_time
+    response.headers["X-Process-Time"] = str(process_time)
+    return response
 
 @app.get("/")
 async def root() -> dict:
