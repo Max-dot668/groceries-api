@@ -182,8 +182,7 @@ async def add_process_time_header(request: Request, call_next):
 async def root() -> dict:
     return {"message": "groceries list manager"}
 
-    
-    
+        
 @app.post("/token", status_code=status.HTTP_201_CREATED)
 async def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]) -> Token:
     user = authenticate_user(fake_users_db, form_data.username, form_data.password)
