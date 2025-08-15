@@ -1,12 +1,12 @@
 import jwt
 import time
-from enum import Enum
 from typing import Annotated
-from fastapi import FastAPI,Path, Query, status, Form, File, UploadFile, HTTPException, Depends, Request
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Query, status, HTTPException, Depends, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, HttpUrl, EmailStr
+from sqlmodel import Field, Session, SQLModel, create_engine, select
+from pydantic import BaseModel, EmailStr
 from passlib.context import CryptContext
 from jwt.exceptions import InvalidTokenError
 from datetime import datetime, timezone, timedelta
@@ -15,7 +15,7 @@ from datetime import datetime, timezone, timedelta
 # openssl rand -hex 32
 SECRET_KEY = "4888181d1e0fdd9fa67ce8bec4cf58d3f3fdf75e8b12d03eb51e1f0bf995bb16"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
     
 fake_users_db = {
     "johndoe": {
@@ -27,54 +27,55 @@ fake_users_db = {
     },
 }
 
-class Token(BaseModel):
-    access_token: str
-    token_type: str
+# Database SQL 
 
-class TokenData(BaseModel):
-    username: str | None = None
-
-items = {} 
-
-class Image(BaseModel):
-    url: HttpUrl
-
-class Item(BaseModel):
-    name: str = Field(min_length=1)
-    priority: int = Field(ge=1, le=5)
+# Models for DB
+class ItemBase(SQLModel):
+    name: str = Field(index=True)
+    quantity: int = Field(ge=1, index=True)
+    priority: int = Field(ge=1, le=5, index=True)
+    
+class Item(ItemBase, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    
+class ItemCreate(ItemBase):
+    name: str
     quantity: int = Field(ge=1)
-    tags: set[str] = set()
-    image: Image | None = None
+    priority: int = Field(ge=1, le=5)
+    
+class ItemUpdate(ItemBase):
+    name: str
+    quantity: int = Field(ge=1)
+    priority: int = Field(ge=1, le=5)
 
-class User(BaseModel):
-    username: str
-    email: EmailStr | None = None
-    full_name: str | None = None
-    disabled: bool | None = None
+# Create DB Engine    
+sqlite_file_name = "items_database.db"
+sqlite_url = f"sqlite:///{sqlite_file_name}"
 
-class UserInDB(User):
-    hashed_password: str
+connect_args = {"check_same_thread": False}
+engine = create_engine(sqlite_url, connect_args=connect_args)
 
-class FormData(BaseModel):
-    username: str
-    password: str
+def create_db_and_tables():
+    SQLModel.metadata.create_all(engine)
 
-class FilterParams(BaseModel):
-    name: str | None = None
-    priority: int | None = None
+# Create Session Dependency
+def get_session():
+    with Session(engine) as session:
+        yield session
+        
+SessionDep = Annotated[Session, Depends(get_session)]
 
-class Tags(Enum):
-    items = "items"
-    users = "users"
-    files = "files"
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+# Modern lifespan apprach to DB
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    create_db_and_tables()
+    yield
 
 # Instance of the class FastAPI framework
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
+# CORS handling for compatibility with frontend, e.g. javascript in browser
 origins = [
     "http://localhost",
     "http://localhost:8080",
@@ -87,6 +88,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Auth2 Security models and user authentication helper functions
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    username: str | None = None
+    
+class User(BaseModel):
+    username: str
+    email: EmailStr | None = None
+    full_name: str | None = None
+    disabled: bool | None = None
+
+class UserInDB(User):
+    hashed_password: str
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
@@ -143,6 +166,8 @@ async def get_current_active_user(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user")
     return current_user
 
+
+# Middleware to benchmark process time for each CRUD operation
 @app.middleware("http")
 async def add_process_time_header(request: Request, call_next):
     start_time = time.perf_counter()
@@ -151,11 +176,15 @@ async def add_process_time_header(request: Request, call_next):
     response.headers["X-Process-Time"] = str(process_time)
     return response
 
+
+# Application logic 
 @app.get("/")
 async def root() -> dict:
     return {"message": "groceries list manager"}
 
-@app.post("/token", tags=[Tags.users])
+    
+    
+@app.post("/token", status_code=status.HTTP_201_CREATED)
 async def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]) -> Token:
     user = authenticate_user(fake_users_db, form_data.username, form_data.password)
     if not user:
@@ -170,89 +199,75 @@ async def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]) -> T
     )
     return Token(access_token=access_token, token_type="bearer")
 
-@app.get("/users/me", tags=[Tags.users])
+@app.get("/users/me", status_code=status.HTTP_200_OK)
 async def read_users_me(
     current_user: Annotated[User, Depends(get_current_active_user)],
 ):
     return current_user
 
-@app.get("/users/me/items/", tags=[Tags.items])
-async def read_item(current_user: Annotated[User, Depends(get_current_active_user)], filter: Annotated[FilterParams, Query()]):
-    """
-    Gets a list of items that matches the filters arguments, else it returns all the items in the database:
-    
-    - **name**: If the user does not provide the name of the item, this will get omitted
-    - **priority**: If the user does not provide the priority from an item in list, this will get omitted
-    """
-    result = []
-    if filter.name is None and filter.priority is None:
-        return items
-    for id in items:
-        if filter.name == items[id]["name"] or filter.priority == items[id]["priority"]:
-            result.append({"name": items[id]["name"], "quantity": items[id]["quantity"]})
-    return result
-        
-@app.post("/users/me/items/{item_id}/", response_model_exclude_unset=True, tags=[Tags.items], status_code=status.HTTP_201_CREATED)
-async def create_item(current_user: Annotated[User, Depends(get_current_active_user)], item_id: Annotated[int, Path()], item: Item,) -> dict:
-    """
-    Create an item with all the information:
-    
-    - **item_id**: The item must have an id 
-    - **name**: Each item must have a name
-    - **priority**: Each item must have a priority from 1-5 inclusive
-    - **tags**: A set of unique tag strings for this item
-    - **image**: If the image is not provided, you can omit this 
-    """
-    item_data = item.model_dump()
-    item_data.update({"date": jsonable_encoder(datetime.now())})
-    items[item_id] = item_data
-    return {"item added": item_data}
-
-@app.put("/users/me/items/{item_id}/", response_model_exclude_unset=True, tags=[Tags.items])
-async def update_item(current_user: Annotated[User, Depends(get_current_active_user)], item_id: Annotated[int, Path()], item: Item) -> dict:
-    """
-    Update an existing item in the groceries list with all the information:
-    
-    - **item_id**: The id must match the id of the item to be updated
-    - **name**: The item must have a name
-    - **priority**: Each item must have a priority from 1-5 inclusive
-    - **tags**: A set of unique tag strings for this item
-    - **image**: If the image is not provided, you can omit this 
-    """
-    if item_id not in items:
-        raise HTTPException(status_code=404, detail="Item not found")
-    else:
-        items[item_id] = item.model_dump()
-    return {"message": "item was updated"}
-
-@app.delete("/users/me/items/{item_id}", tags=[Tags.items])
-async def delete_item(current_user: Annotated[User, Depends(get_current_active_user)], item_id: Annotated[int, Path()]):
-    """
-    Delete an existing item in the groceries list with the information:
-    
-    - **item_id**: The id must match the id of the item to be deleted
-    """
-    my_item = items.get(item_id)
-    if my_item is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-    del items[item_id]
-    return my_item
-
-@app.post("/users/me/files/", tags=[Tags.files], status_code=status.HTTP_201_CREATED)
-async def create_upload_file(
+@app.post("/items/", status_code=status.HTTP_201_CREATED)
+def create_items(
     current_user: Annotated[User, Depends(get_current_active_user)],
-    file: Annotated[bytes, File()],
-    fileb: Annotated[UploadFile, File()],
-    token: Annotated[str, Form()],
+    item: ItemCreate,
+    session: SessionDep,
+    ) -> Item:
+    db_item = Item.model_validate(item)
+    session.add(db_item)
+    session.commit()
+    session.refresh(db_item)
+    return db_item
+
+# Read all items
+@app.get("/items/", status_code=status.HTTP_200_OK)
+def read_items(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    session: SessionDep,
+    offset: int = 0,
+    limit: Annotated[int, Query(le=100)] = 100,
     ):
-    """
-    Upload a file with all the information:
-    - **file**: Relatively small sized file  
-    - **fileb**: A better file input handling for bigger files
-    - **Token**: An input token that accepts a string
-    """
-    return {
-        "file_size": len(file),
-        "token": token,
-        "fileb_content_type": fileb.content_type,
-    }
+    my_items = session.exec(select(Item).offset(offset).limit(limit)).all()
+    return my_items
+
+# Read an item
+@app.get("/items/{item_id}", status_code=status.HTTP_200_OK)
+def read_item(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    item_id: int,
+    session: SessionDep,
+    ) -> Item:
+    item = session.get(Item, item_id)
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    return item
+
+# Update an update
+@app.put("/items/{item_id}", status_code=status.HTTP_200_OK)
+def update_item(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    item_id: int,
+    item: ItemUpdate,
+    session: SessionDep,
+):
+    item_db = session.get(Item, item_id)
+    if not item_db:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    item_data = item.model_dump(exclude_unset=True)
+    item_db.sqlmodel_update(item_data)
+    session.add(item_db)
+    session.commit()
+    session.refresh(item_db)
+    return item_db
+
+# Delete an item
+@app.delete("/items/{item_id}", status_code=status.HTTP_200_OK)
+def delete_item(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    item_id: int,
+    session: SessionDep,
+    ):
+    item = session.get(Item, item_id)
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    session.delete(item)
+    session.commit()
+    return {"ok": True}
