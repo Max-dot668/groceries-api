@@ -27,9 +27,8 @@ fake_users_db = {
     },
 }
 
-# Database SQL 
-
-# Models for DB
+# Database with SQLite 
+# SQL MODELS
 class ItemBase(SQLModel):
     name: str = Field(index=True)
     quantity: int = Field(ge=1, index=True)
