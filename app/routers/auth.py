@@ -1,18 +1,21 @@
+# routers/auth.py
 from typing import Annotated
 from fastapi import APIRouter, status, HTTPException, Depends
-from fastapi.security import OAuth2PasswordRequestForm  
-from datetime import timedelta  
-
+from fastapi.security import OAuth2PasswordRequestForm
+from datetime import timedelta
 from ..security import ACCESS_TOKEN_EXPIRE_MINUTES
-from ..dependencies import authenticate_user, create_access_token
-from ..db.database import fake_users_db 
+from ..dependencies import authenticate_user, create_access_token, SessionDep
 from ..models import Token
 
-router = APIRouter()
+router = APIRouter(tags=["auth"])
 
 @router.post("/token", status_code=status.HTTP_201_CREATED)
-async def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]) -> Token:
-    user = authenticate_user(fake_users_db, form_data.username, form_data.password)
+async def login(
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+    session: SessionDep
+) -> Token:
+    """Login endpoint that authenticates against the database"""
+    user = authenticate_user(session, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
