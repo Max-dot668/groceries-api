@@ -9,7 +9,7 @@ from ..models import Token
 
 router = APIRouter(tags=["auth"])
 
-@router.post("/token", status_code=status.HTTP_201_CREATED)
+@router.post("/token/", status_code=status.HTTP_201_CREATED)
 async def login(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     session: SessionDep
