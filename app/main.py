@@ -19,13 +19,12 @@ A REST API for managing grocery lists. 🚀
 
 ## Auth
 User login with jwt authentication system.
+* **Create a user account**.
 * **Login with account**.
 
 ## Users
 
 You will be able to:
-
-* **Create a user account**.
 * **Create users**.
 * **Read users**.
 
