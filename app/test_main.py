@@ -12,3 +12,4 @@ def test_root():
         "docs": "/docs",
         "version": "1.0.0"
     }
+    

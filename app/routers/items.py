@@ -26,7 +26,7 @@ def create_item(
         name=item.name,
         quantity=item.quantity,
         priority=item.priority,
-        owner_id=current_user.id  # Now type checker is happy!
+        owner_id=current_user.id  
     )
     session.add(db_item)
     session.commit()
